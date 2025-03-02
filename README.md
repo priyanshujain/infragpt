@@ -7,17 +7,11 @@ A CLI tool that converts natural language requests into Google Cloud (gcloud) co
 
 ## Installation
 
-### From PyPI (Recommended)
+### Using pip
 
-Install directly from PyPI:
+Using pip to install packages system-wide is [not recommended](https://peps.python.org/pep-0668/). Instead, install InfraGPT using `pipx` in the next section.
 
-```
-pip install infragpt
-```
-
-### Using pipx (Recommended for CLI tools)
-
-Install using pipx for isolated environments:
+### Using pipx
 
 ```
 # Install pipx if you don't have it
