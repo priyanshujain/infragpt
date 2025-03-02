@@ -79,6 +79,15 @@ def main():
     parser = setup_parser()
     args = parser.parse_args()
     
+    # If --help is specified, argparse will handle it automatically
+    if args.verbose:
+        # Get and print version
+        from importlib.metadata import version
+        try:
+            print(f"InfraGPT version: {version('infragpt')}")
+        except:
+            print("InfraGPT: Version information not available")
+    
     # If no prompt was provided, enter interactive mode
     if not args.prompt:
         print("InfraGPT (Ctrl+C to exit)")
