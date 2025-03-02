@@ -15,6 +15,19 @@ Install directly from PyPI:
 pip install infragpt
 ```
 
+### Using pipx (Recommended for CLI tools)
+
+Install using pipx for isolated environments:
+
+```
+# Install pipx if you don't have it
+pip install --user pipx
+pipx ensurepath
+
+# Install infragpt
+pipx install infragpt
+```
+
 ### From Source
 
 1. Clone the repository:
@@ -77,44 +90,6 @@ infragpt
 - `--model`, `-m`: Choose the LLM model (gpt4o or claude)
 - `--verbose`, `-v`: Enable verbose output
 
-## Development
+## Contributing
 
-### Versioning and Releases
-
-The project includes a helper script for versioning:
-
-```bash
-# Bump the patch version (0.1.0 -> 0.1.1)
-./bump_version.py
-
-# Bump the minor version (0.1.0 -> 0.2.0)
-./bump_version.py minor
-
-# Bump the major version (0.1.0 -> 1.0.0)
-./bump_version.py major
-
-# Bump and create a git commit and tag
-./bump_version.py --commit
-```
-
-### CI/CD
-
-This project uses GitHub Actions for CI/CD:
-
-1. **Tests Workflow**: Runs on every PR and push to master
-   - Installs the package
-   - Verifies it can be imported
-   - Checks package structure
-
-2. **Publish Workflow**: Automatically publishes to PyPI
-   - Triggers on pushes to the master branch
-   - Requires PyPI secrets to be configured in GitHub
-
-To set up PyPI publishing:
-1. Create an API token on PyPI:
-   - Go to https://pypi.org/manage/account/token/
-   - Create a token with "Entire account (all projects)" scope
-2. Add the token as a GitHub secret:
-   - Go to your GitHub repository → Settings → Secrets and variables → Actions
-   - Create a new repository secret named `PYPI_API_TOKEN`
-   - Paste your PyPI API token as the value
+For information on how to contribute to InfraGPT, including development setup, release process, and CI/CD configuration, please see the [CONTRIBUTING.md](CONTRIBUTING.md) file.
