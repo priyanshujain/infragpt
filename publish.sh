@@ -21,7 +21,15 @@ echo "Do you want to upload to PyPI? (y/n)"
 read upload_choice
 
 if [ "$upload_choice" = "y" ]; then
-    python -m twine upload dist/*
+    # Use API token if available
+    if [ -f ~/.pypirc ] && grep -q "username\|password" ~/.pypirc; then
+        echo "Using credentials from ~/.pypirc"
+        python -m twine upload dist/*
+    else
+        echo "Enter your PyPI API token (input will be hidden):"
+        read -s API_TOKEN
+        python -m twine upload --username "__token__" --password "$API_TOKEN" dist/*
+    fi
     echo "Package published to PyPI!"
 else
     echo "Upload cancelled."

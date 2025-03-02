@@ -111,7 +111,10 @@ This project uses GitHub Actions for CI/CD:
    - Requires PyPI secrets to be configured in GitHub
 
 To set up PyPI publishing:
-1. Create API tokens on PyPI
-2. Add them as GitHub secrets:
-   - `PYPI_USERNAME`: Your PyPI username
-   - `PYPI_PASSWORD`: Your PyPI API token
+1. Create an API token on PyPI:
+   - Go to https://pypi.org/manage/account/token/
+   - Create a token with "Entire account (all projects)" scope
+2. Add the token as a GitHub secret:
+   - Go to your GitHub repository → Settings → Secrets and variables → Actions
+   - Create a new repository secret named `PYPI_API_TOKEN`
+   - Paste your PyPI API token as the value
