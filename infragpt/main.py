@@ -170,10 +170,54 @@ def get_credentials(model_type: Optional[MODEL_TYPE] = None, api_key: Optional[s
     
     return model_type, api_key
 
-def get_llm(model_type: Optional[MODEL_TYPE] = None, api_key: Optional[str] = None, verbose: bool = False):
+def validate_api_key(model_type: MODEL_TYPE, api_key: str) -> bool:
+    """Validate if the API key is correct by making a minimal API call."""
+    try:
+        if model_type == "gpt4o":
+            # Create a minimal OpenAI client to validate the key
+            llm = ChatOpenAI(
+                model="gpt-4o", 
+                temperature=0, 
+                api_key=api_key,
+                max_tokens=5  # Minimal response to reduce token usage
+            )
+            # Make a minimal request
+            response = llm.invoke("Say OK")
+            return True
+        elif model_type == "claude":
+            # Create a minimal Anthropic client to validate the key
+            llm = ChatAnthropic(
+                model="claude-3-sonnet-20240229", 
+                temperature=0, 
+                api_key=api_key,
+                max_tokens=5  # Minimal response to reduce token usage
+            )
+            # Make a minimal request
+            response = llm.invoke("Say OK")
+            return True
+        else:
+            raise ValueError(f"Unsupported model type: {model_type}")
+    except Exception as e:
+        if "API key" in str(e) or "auth" in str(e).lower() or "key" in str(e).lower() or "token" in str(e).lower():
+            console.print(f"[bold red]Invalid API key:[/bold red] {e}")
+            return False
+        else:
+            # If the error is not related to authentication, re-raise it
+            console.print(f"[bold yellow]Warning:[/bold yellow] API connection error: {e}")
+            # For other errors, we still allow the key - it might be a temporary issue
+            return True
+
+def get_llm(model_type: Optional[MODEL_TYPE] = None, api_key: Optional[str] = None, verbose: bool = False, validate: bool = True):
     """Initialize the appropriate LLM based on user selection."""
     # Get credentials and actual model type
     resolved_model, resolved_api_key = get_credentials(model_type, api_key, verbose)
+    
+    # Validate API key if requested
+    if validate:
+        # If key is invalid, prompt for a new one
+        while not validate_api_key(resolved_model, resolved_api_key):
+            console.print("[bold red]API key validation failed.[/bold red]")
+            resolved_model, resolved_api_key = prompt_credentials(resolved_model)
     
     if resolved_model == "gpt4o":
         return ChatOpenAI(model="gpt-4o", temperature=0, api_key=resolved_api_key)
@@ -475,7 +519,8 @@ def handle_command_result(result: str, model_type: Optional[MODEL_TYPE] = None, 
 def generate_gcloud_command(prompt: str, model_type: Optional[MODEL_TYPE] = None, api_key: Optional[str] = None, verbose: bool = False) -> str:
     """Generate a gcloud command based on the user's natural language prompt."""
     # Initialize the LLM and get the actual model type used
-    llm = get_llm(model_type, api_key, verbose)
+    # Always validate the API key on the first real command generation
+    llm = get_llm(model_type, api_key, verbose, validate=True)
     
     # Get the actual model being used from llm configuration or config file
     actual_model = model_type
@@ -514,16 +559,25 @@ def prompt_credentials(existing_model: Optional[MODEL_TYPE] = None):
     # Prompt for API key based on model
     provider = "OpenAI" if model_type == "gpt4o" else "Anthropic"
     
-    # Keep prompting until we get a non-empty API key
-    api_key = ""
-    while not api_key.strip():
-        api_key = Prompt.ask(
-            f"[bold cyan]Enter your {provider} API key[/bold cyan] [dim](will be saved in {CONFIG_FILE})[/dim]",
-            password=True
-        )
+    valid_key = False
+    while not valid_key:
+        # Keep prompting until we get a non-empty API key
+        api_key = ""
+        while not api_key.strip():
+            api_key = Prompt.ask(
+                f"[bold cyan]Enter your {provider} API key[/bold cyan] [dim](will be saved in {CONFIG_FILE})[/dim]",
+                password=True
+            )
+            
+            if not api_key.strip():
+                console.print("[bold red]API key cannot be empty. Please try again.[/bold red]")
         
-        if not api_key.strip():
-            console.print("[bold red]API key cannot be empty. Please try again.[/bold red]")
+        # Validate the API key
+        with console.status(f"[bold blue]Validating {provider} API key...[/bold blue]", spinner="dots"):
+            valid_key = validate_api_key(model_type, api_key)
+        
+        if not valid_key:
+            console.print("[bold red]Invalid API key. Please try again.[/bold red]")
     
     # Save credentials for future use
     config = load_config()
@@ -531,7 +585,7 @@ def prompt_credentials(existing_model: Optional[MODEL_TYPE] = None):
     config["api_key"] = api_key
     save_config(config)
     
-    console.print(f"[green]Credentials saved successfully for {model_type}![/green]\n")
+    console.print(f"[green]Credentials validated and saved successfully for {model_type}![/green]\n")
     return model_type, api_key
 
 def interactive_mode(model_type: Optional[MODEL_TYPE] = None, api_key: Optional[str] = None, verbose: bool = False):
@@ -603,6 +657,46 @@ def interactive_mode(model_type: Optional[MODEL_TYPE] = None, api_key: Optional[
             console.print("\n[bold]Exiting InfraGPT.[/bold]")
             sys.exit(0)
 
+def validate_env_api_keys():
+    """Validate API keys from environment variables and prompt if invalid."""
+    openai_key = os.getenv("OPENAI_API_KEY")
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    env_model = os.getenv("INFRAGPT_MODEL")
+    
+    # If we have specific model set in env but invalid key, prompt for it
+    if env_model == "gpt4o" and openai_key:
+        if not validate_api_key("gpt4o", openai_key):
+            console.print("[bold red]Invalid OpenAI API key in environment variable.[/bold red]")
+            model, api_key = prompt_credentials("gpt4o")
+            # Update environment for this session
+            os.environ["OPENAI_API_KEY"] = api_key
+            return "gpt4o", api_key
+    elif env_model == "claude" and anthropic_key:
+        if not validate_api_key("claude", anthropic_key):
+            console.print("[bold red]Invalid Anthropic API key in environment variable.[/bold red]")
+            model, api_key = prompt_credentials("claude")
+            # Update environment for this session
+            os.environ["ANTHROPIC_API_KEY"] = api_key
+            return "claude", api_key
+    
+    # For default case or when no specific model set
+    if openai_key and (not env_model or env_model == "gpt4o"):
+        if not validate_api_key("gpt4o", openai_key):
+            console.print("[bold red]Invalid OpenAI API key in environment variable.[/bold red]")
+            model, api_key = prompt_credentials("gpt4o")
+            # Update environment for this session
+            os.environ["OPENAI_API_KEY"] = api_key
+            return "gpt4o", api_key
+    elif anthropic_key and (not env_model or env_model == "claude"):
+        if not validate_api_key("claude", anthropic_key):
+            console.print("[bold red]Invalid Anthropic API key in environment variable.[/bold red]")
+            model, api_key = prompt_credentials("claude")
+            # Update environment for this session
+            os.environ["ANTHROPIC_API_KEY"] = api_key
+            return "claude", api_key
+            
+    return None, None
+
 def init_config():
     """Initialize configuration file with environment variables if it doesn't exist."""
     if CONFIG_FILE.exists():
@@ -618,8 +712,15 @@ def init_config():
     anthropic_key = os.getenv("ANTHROPIC_API_KEY")
     env_model = os.getenv("INFRAGPT_MODEL")
     
-    # Determine which credentials to save
-    if anthropic_key and (not env_model or env_model == "claude"):
+    # Validate environment variable API keys
+    model, api_key = validate_env_api_keys()
+    
+    # If we got valid credentials from validation, save those
+    if model and api_key:
+        config["model"] = model
+        config["api_key"] = api_key
+    # Otherwise use the original environment variables
+    elif anthropic_key and (not env_model or env_model == "claude"):
         config["model"] = "claude"
         config["api_key"] = anthropic_key
     elif openai_key and (not env_model or env_model == "gpt4o"):

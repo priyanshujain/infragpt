@@ -78,7 +78,14 @@ export INFRAGPT_MODEL="gpt4o"  # or "claude"
 
 When environment variables are available, InfraGPT will automatically save the detected model and API key to the configuration file for future use.
 
-If no credentials are found from any of these sources, or if an empty API key is detected, InfraGPT will prompt you to select a model and enter your API key interactively at startup, before accepting any commands. The application validates that API keys are not empty.
+If no credentials are found from any of these sources, if an empty API key is detected, or if an invalid API key is provided, InfraGPT will prompt you to select a model and enter your API key interactively at startup, before accepting any commands. 
+
+**API Key Validation:**
+- The application validates API keys by making a small test request to the service provider
+- When entering credentials interactively, API keys are validated immediately
+- Invalid keys from environment variables or the config file are detected at startup
+- The system will continue prompting until valid credentials are provided
+- All validated credentials are automatically saved to the config file
 
 ## Usage
 
