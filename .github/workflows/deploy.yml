@@ -1,0 +1,46 @@
+name: Deploy and Release
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - master
+
+jobs:
+  deploy:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+
+      - name: Bump version
+        run: |
+          # Make bump_version.py executable
+          chmod +x bump_version.py
+
+          # Run the bump_version script with patch and commit flags
+          # Use echo to automatically confirm the prompt
+          echo "y" | python bump_version.py patch --commit
+
+      - name: Push changes
+        run: |
+          # Get the latest tag
+          tag=$(git describe --tags --abbrev=0)
+
+          # Push both the commit and the tag
+          git push origin master
+          git push origin $tag
