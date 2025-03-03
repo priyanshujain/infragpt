@@ -101,7 +101,13 @@ Generate gcloud commands from natural language:
 infragpt generate "create a new VM instance called test-vm in us-central1 with 2 CPUs"
 ```
 
-**Important**: To use the default command with arguments, you need to use -- to separate the command from the arguments:
+You can also use the tool without specifying the command:
+
+```
+infragpt "create a new VM instance called test-vm in us-central1 with 2 CPUs"
+```
+
+Or use the special `--` syntax to handle arguments that might conflict with CLI options:
 
 ```
 infragpt -- "create a new VM instance called test-vm in us-central1 with 2 CPUs"

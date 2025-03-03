@@ -849,9 +849,9 @@ def init_config():
 @click.version_option(package_name='infragpt')
 def cli(ctx):
     """InfraGPT - Convert natural language to Google Cloud commands and manage history."""
-    # If no subcommand is specified, default to interactive mode
+    # If no subcommand is specified, go to interactive mode
     if ctx.invoked_subcommand is None:
-        ctx.invoke(main)
+        ctx.invoke(main, prompt=())
 
 @cli.command(name='history')
 @click.option('--limit', '-l', type=int, default=10, help='Number of history entries to display')
@@ -932,7 +932,7 @@ def history_command(limit, type, export):
             console.print(f"\n[dim]{i+1}. {timestamp_short}[/dim] [bold]{entry_type}[/bold]")
             console.print(json.dumps(entry.get('data', {}), indent=2))
 
-@cli.command(name='generate', context_settings={"ignore_unknown_options": True})
+@cli.command(name='generate', help="Generate gcloud commands from natural language")
 @click.argument('prompt', nargs=-1, required=False)
 @click.option('--model', '-m', type=click.Choice(['gpt4o', 'claude']), 
               help='LLM model to use (gpt4o or claude)')

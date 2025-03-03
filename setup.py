@@ -19,9 +19,10 @@ setup(
     install_requires=requirements,
     entry_points={
         "console_scripts": [
-            "infragpt=infragpt.main:cli",
+            "infragpt=infragpt.bin.launcher:main",
         ],
     },
+    scripts=['bin/infragpt'],
     classifiers=[
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.8",
