@@ -35,20 +35,52 @@ pipx install infragpt
    pip install -e .
    ```
 
-## Usage
+## Credentials Management
 
-### API Keys
+InfraGPT requires API keys to work. There are three ways to provide credentials, in order of priority:
 
-InfraGPT requires API keys to work:
+### 1. Command Line Parameters
 
-- For OpenAI GPT-4o: Set the `OPENAI_API_KEY` environment variable
-- For Anthropic Claude: Set the `ANTHROPIC_API_KEY` environment variable
+```bash
+# Using OpenAI GPT-4o
+infragpt --model gpt4o --api-key "your-openai-api-key" "your prompt here"
 
-You can set these in your shell:
+# Using Anthropic Claude
+infragpt --model claude --api-key "your-anthropic-api-key" "your prompt here"
 ```
+
+### 2. Configuration File
+
+InfraGPT stores credentials in `~/.config/infragpt/config.yaml` and uses them automatically on subsequent runs. This file is created:
+- When you provide credentials interactively
+- Automatically on first run if environment variables are available
+- When you use command line parameters
+
+### 3. Environment Variables
+
+Set one or more of these environment variables:
+
+```bash
+# For OpenAI GPT-4o
 export OPENAI_API_KEY="your-openai-api-key"
+
+# For Anthropic Claude
 export ANTHROPIC_API_KEY="your-anthropic-api-key"
+
+# Optionally specify the model
+export INFRAGPT_MODEL="gpt4o"  # or "claude"
 ```
+
+**Model Selection Rules**:
+- If both API keys are set, InfraGPT uses OpenAI by default unless specified otherwise
+- If only one API key is set, the corresponding model is used automatically
+- If a model is explicitly selected (via command line or INFRAGPT_MODEL), the corresponding API key must be available
+
+When environment variables are available, InfraGPT will automatically save the detected model and API key to the configuration file for future use.
+
+If no credentials are found from any of these sources, or if an empty API key is detected, InfraGPT will prompt you to select a model and enter your API key interactively at startup, before accepting any commands. The application validates that API keys are not empty.
+
+## Usage
 
 ### Command Line
 
@@ -72,6 +104,10 @@ Launch InfraGPT in interactive mode (no initial prompt):
 infragpt
 ```
 
+Use keyboard shortcuts in interactive mode:
+- `Ctrl+D` to exit the application
+- `Ctrl+C` to clear the current input and start a new prompt
+
 ## Example Commands
 
 - "Create a new GKE cluster with 3 nodes in us-central1"
@@ -82,6 +118,7 @@ infragpt
 ## Options
 
 - `--model`, `-m`: Choose the LLM model (gpt4o or claude)
+- `--api-key`, `-k`: Provide an API key for the selected model
 - `--verbose`, `-v`: Enable verbose output
 
 ## Contributing

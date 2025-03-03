@@ -3,6 +3,8 @@
 import os
 import sys
 import re
+import yaml
+import json
 from typing import Literal, Optional, List, Dict, Tuple, Any
 
 import click
@@ -32,20 +34,153 @@ console = Console()
 # Define type for model selection
 MODEL_TYPE = Literal["gpt4o", "claude"]
 
-def get_llm(model_type: MODEL_TYPE, verbose: bool = False):
+# Path to config directory
+CONFIG_DIR = pathlib.Path.home() / ".config" / "infragpt"
+CONFIG_FILE = CONFIG_DIR / "config.yaml"
+
+def load_config():
+    """Load configuration from config file."""
+    if not CONFIG_FILE.exists():
+        return {}
+    
+    try:
+        with open(CONFIG_FILE, "r") as f:
+            return yaml.safe_load(f) or {}
+    except Exception as e:
+        console.print(f"[yellow]Warning:[/yellow] Could not load config: {e}")
+        return {}
+
+def save_config(config):
+    """Save configuration to config file."""
+    # Ensure directory exists
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    
+    try:
+        with open(CONFIG_FILE, "w") as f:
+            yaml.dump(config, f)
+    except Exception as e:
+        console.print(f"[yellow]Warning:[/yellow] Could not save config: {e}")
+
+def get_credentials(model_type: Optional[MODEL_TYPE] = None, api_key: Optional[str] = None, verbose: bool = False):
+    """
+    Get API credentials based on priority:
+    1. Command line parameters
+    2. Stored config
+    3. Environment variables
+    4. Interactive prompt
+    """
+    config = load_config()
+    
+    # Priority 1: Command line parameters
+    if model_type and api_key and api_key.strip():  # Ensure API key is not empty
+        # Update config for future use
+        config["model"] = model_type
+        config["api_key"] = api_key
+        save_config(config)
+        return model_type, api_key
+    
+    # Priority 2: Check stored config
+    if config.get("model") and config.get("api_key") and config.get("api_key").strip():  # Ensure API key is not empty
+        if verbose:
+            console.print(f"[dim]Using credentials from config file[/dim]")
+        return config["model"], config["api_key"]
+    
+    # Priority 3: Check environment variables
+    openai_key = os.getenv("OPENAI_API_KEY")
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    env_model = os.getenv("INFRAGPT_MODEL")
+    
+    # Command line model takes precedence over env var model
+    resolved_model = model_type or env_model
+    
+    # Validate environment credentials
+    if anthropic_key and openai_key:
+        # If both keys are provided, use the model to decide
+        if resolved_model == "claude":
+            if verbose:
+                console.print(f"[dim]Using Anthropic API key from environment[/dim]")
+            # Save to config for future use
+            config["model"] = "claude"
+            config["api_key"] = anthropic_key
+            save_config(config)
+            return "claude", anthropic_key
+        elif resolved_model == "gpt4o":
+            if verbose:
+                console.print(f"[dim]Using OpenAI API key from environment[/dim]")
+            # Save to config for future use
+            config["model"] = "gpt4o"
+            config["api_key"] = openai_key
+            save_config(config)
+            return "gpt4o", openai_key
+        elif not resolved_model:
+            # Default to OpenAI if model not specified
+            if verbose:
+                console.print(f"[dim]Multiple API keys found, defaulting to OpenAI[/dim]")
+            # Save to config for future use
+            config["model"] = "gpt4o"
+            config["api_key"] = openai_key
+            save_config(config)
+            return "gpt4o", openai_key
+    elif anthropic_key:
+        if resolved_model and resolved_model != "claude":
+            console.print("[bold red]Error:[/bold red] Anthropic API key is set but model is not claude.")
+            sys.exit(1)
+        if verbose:
+            console.print(f"[dim]Using Anthropic API key from environment[/dim]")
+        # Save to config for future use
+        config["model"] = "claude"
+        config["api_key"] = anthropic_key
+        save_config(config)
+        return "claude", anthropic_key
+    elif openai_key:
+        if resolved_model and resolved_model != "gpt4o":
+            console.print("[bold red]Error:[/bold red] OpenAI API key is set but model is not gpt4o.")
+            sys.exit(1)
+        if verbose:
+            console.print(f"[dim]Using OpenAI API key from environment[/dim]")
+        # Save to config for future use
+        config["model"] = "gpt4o"
+        config["api_key"] = openai_key
+        save_config(config)
+        return "gpt4o", openai_key
+    
+    # Priority 4: Prompt user interactively
+    console.print("\n[bold yellow]API credentials required[/bold yellow]")
+    
+    # If model is provided, use that, otherwise prompt for model choice
+    if not model_type:
+        model_options = ["gpt4o", "claude"]
+        model_type = Prompt.ask(
+            "[bold cyan]Select model[/bold cyan]",
+            choices=model_options,
+            default="gpt4o"
+        )
+    
+    # Prompt for API key based on model
+    provider = "OpenAI" if model_type == "gpt4o" else "Anthropic"
+    api_key = Prompt.ask(
+        f"[bold cyan]Enter your {provider} API key[/bold cyan] [dim](will be saved in {CONFIG_FILE})[/dim]",
+        password=True
+    )
+    
+    # Save credentials for future use
+    config["model"] = model_type
+    config["api_key"] = api_key
+    save_config(config)
+    
+    return model_type, api_key
+
+def get_llm(model_type: Optional[MODEL_TYPE] = None, api_key: Optional[str] = None, verbose: bool = False):
     """Initialize the appropriate LLM based on user selection."""
-    if model_type == "gpt4o":
-        if not os.getenv("OPENAI_API_KEY"):
-            console.print("[bold red]Error:[/bold red] OPENAI_API_KEY environment variable not set.")
-            sys.exit(1)
-        return ChatOpenAI(model="gpt-4o", temperature=0)
-    elif model_type == "claude":
-        if not os.getenv("ANTHROPIC_API_KEY"):
-            console.print("[bold red]Error:[/bold red] ANTHROPIC_API_KEY environment variable not set.")
-            sys.exit(1)
-        return ChatAnthropic(model="claude-3-sonnet-20240229", temperature=0)
+    # Get credentials and actual model type
+    resolved_model, resolved_api_key = get_credentials(model_type, api_key, verbose)
+    
+    if resolved_model == "gpt4o":
+        return ChatOpenAI(model="gpt-4o", temperature=0, api_key=resolved_api_key)
+    elif resolved_model == "claude":
+        return ChatAnthropic(model="claude-3-sonnet-20240229", temperature=0, api_key=resolved_api_key)
     else:
-        raise ValueError(f"Unsupported model type: {model_type}")
+        raise ValueError(f"Unsupported model type: {resolved_model}")
 
 def create_prompt():
     """Create the prompt template for generating cloud commands."""
@@ -257,7 +392,7 @@ def split_commands(result: str) -> List[str]:
     commands = [cmd.strip() for cmd in result.splitlines() if cmd.strip()]
     return commands
 
-def handle_command_result(result: str, model_type: MODEL_TYPE, verbose: bool = False):
+def handle_command_result(result: str, model_type: Optional[MODEL_TYPE] = None, verbose: bool = False):
     """Handle the generated command results with options to print, copy, or execute."""
     commands = split_commands(result)
     
@@ -337,13 +472,19 @@ def handle_command_result(result: str, model_type: MODEL_TYPE, verbose: bool = F
                 if not Confirm.ask("[bold yellow]Continue with the next command?[/bold yellow]", default=True):
                     break
 
-def generate_gcloud_command(prompt: str, model_type: MODEL_TYPE, verbose: bool = False) -> str:
+def generate_gcloud_command(prompt: str, model_type: Optional[MODEL_TYPE] = None, api_key: Optional[str] = None, verbose: bool = False) -> str:
     """Generate a gcloud command based on the user's natural language prompt."""
-    # Initialize the LLM
-    llm = get_llm(model_type, verbose)
+    # Initialize the LLM and get the actual model type used
+    llm = get_llm(model_type, api_key, verbose)
     
-    if verbose:
-        console.print(f"[dim]Generating command using {model_type}...[/dim]")
+    # Get the actual model being used from llm configuration or config file
+    actual_model = model_type
+    if not actual_model:
+        config = load_config()
+        actual_model = config.get("model", "unknown")
+    
+    if verbose and actual_model:
+        console.print(f"[dim]Generating command using {actual_model}...[/dim]")
     
     # Create the prompt
     prompt_template = create_prompt()
@@ -354,7 +495,46 @@ def generate_gcloud_command(prompt: str, model_type: MODEL_TYPE, verbose: bool =
     
     return result.strip()
 
-def interactive_mode(model_type: MODEL_TYPE, verbose: bool = False):
+def prompt_credentials(existing_model: Optional[MODEL_TYPE] = None):
+    """Prompt user for model and API key before starting."""
+    if existing_model:
+        console.print("\n[bold yellow]API key required. Please enter your credentials:[/bold yellow]")
+        model_type = existing_model
+    else:
+        console.print("\n[bold yellow]No model configured. Please set up your credentials:[/bold yellow]")
+        
+        # Prompt for model choice
+        model_options = ["gpt4o", "claude"]
+        model_type = Prompt.ask(
+            "[bold cyan]Select model[/bold cyan]",
+            choices=model_options,
+            default="gpt4o"
+        )
+    
+    # Prompt for API key based on model
+    provider = "OpenAI" if model_type == "gpt4o" else "Anthropic"
+    
+    # Keep prompting until we get a non-empty API key
+    api_key = ""
+    while not api_key.strip():
+        api_key = Prompt.ask(
+            f"[bold cyan]Enter your {provider} API key[/bold cyan] [dim](will be saved in {CONFIG_FILE})[/dim]",
+            password=True
+        )
+        
+        if not api_key.strip():
+            console.print("[bold red]API key cannot be empty. Please try again.[/bold red]")
+    
+    # Save credentials for future use
+    config = load_config()
+    config["model"] = model_type
+    config["api_key"] = api_key
+    save_config(config)
+    
+    console.print(f"[green]Credentials saved successfully for {model_type}![/green]\n")
+    return model_type, api_key
+
+def interactive_mode(model_type: Optional[MODEL_TYPE] = None, api_key: Optional[str] = None, verbose: bool = False):
     """Run InfraGPT in interactive mode with enhanced prompting."""
     # Ensure history directory exists
     history_dir = pathlib.Path.home() / ".infragpt"
@@ -369,12 +549,33 @@ def interactive_mode(model_type: MODEL_TYPE, verbose: bool = False):
         'prompt': '#00FFFF bold',
     })
     
+    # Get actual model to display, either from params or config
+    actual_model = model_type
+    if not actual_model:
+        config = load_config()
+        actual_model = config.get("model")
+    
     # Welcome message
     console.print(Panel.fit(
         Text("InfraGPT - Convert natural language to gcloud commands", style="bold green"),
         border_style="blue"
     ))
-    console.print(f"[yellow]Using model:[/yellow] [bold]{model_type}[/bold]")
+    
+    # If no model configured or empty API key, prompt for credentials now
+    config = load_config()
+    has_model = actual_model is not None
+    has_api_key = api_key is not None and api_key.strip()
+    
+    if not has_model and not has_api_key:
+        # Check config as well for empty API key
+        config_api_key = config.get("api_key", "")
+        if actual_model and (not config_api_key or not config_api_key.strip()):
+            model_type, api_key = prompt_credentials(actual_model)
+        else:
+            model_type, api_key = prompt_credentials(actual_model)
+        actual_model = model_type
+    
+    console.print(f"[yellow]Using model:[/yellow] [bold]{actual_model}[/bold]")
     console.print("[dim]Press Ctrl+D to exit, Ctrl+C to clear input[/dim]\n")
     
     while True:
@@ -402,14 +603,45 @@ def interactive_mode(model_type: MODEL_TYPE, verbose: bool = False):
             console.print("\n[bold]Exiting InfraGPT.[/bold]")
             sys.exit(0)
 
+def init_config():
+    """Initialize configuration file with environment variables if it doesn't exist."""
+    if CONFIG_FILE.exists():
+        return
+    
+    # Create config directory if it doesn't exist
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    
+    config = {}
+    
+    # Check for environment variables to populate initial config
+    openai_key = os.getenv("OPENAI_API_KEY")
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    env_model = os.getenv("INFRAGPT_MODEL")
+    
+    # Determine which credentials to save
+    if anthropic_key and (not env_model or env_model == "claude"):
+        config["model"] = "claude"
+        config["api_key"] = anthropic_key
+    elif openai_key and (not env_model or env_model == "gpt4o"):
+        config["model"] = "gpt4o"
+        config["api_key"] = openai_key
+    
+    # Save config if we have anything to save
+    if config:
+        save_config(config)
+
 @click.command()
 @click.argument('prompt', nargs=-1)
-@click.option('--model', '-m', type=click.Choice(['gpt4o', 'claude']), default='gpt4o', 
-              help='LLM model to use')
+@click.option('--model', '-m', type=click.Choice(['gpt4o', 'claude']), 
+              help='LLM model to use (gpt4o or claude)')
+@click.option('--api-key', '-k', help='API key for the selected model')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
 @click.version_option(package_name='infragpt')
-def main(prompt, model, verbose):
+def main(prompt, model, api_key, verbose):
     """InfraGPT - Convert natural language to Google Cloud commands."""
+    # Initialize config file if it doesn't exist
+    init_config()
+    
     if verbose:
         from importlib.metadata import version
         try:
@@ -417,13 +649,37 @@ def main(prompt, model, verbose):
         except:
             console.print("[dim]InfraGPT: Version information not available[/dim]")
     
+    # Check if we need to prompt for credentials before starting
+    config = load_config()
+    
+    # Case 1: Command-line provided model but empty API key
+    if model and (not api_key or not api_key.strip()):
+        model, api_key = prompt_credentials(model)
+    # Case 2: No command-line credentials
+    elif not model and not api_key:
+        has_model = config.get("model") is not None
+        has_api_key = config.get("api_key") is not None and config.get("api_key").strip()
+        
+        # Case 2a: Config has model but empty API key
+        if has_model and not has_api_key:
+            model, api_key = prompt_credentials(config.get("model"))
+        # Case 2b: No valid credentials in config or empty API key
+        elif not (has_model and has_api_key):
+            # Check if we have environment variables
+            openai_key = os.getenv("OPENAI_API_KEY")
+            anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+            
+            if not (openai_key or anthropic_key):
+                # No credentials anywhere, prompt before continuing
+                model, api_key = prompt_credentials()
+    
     # If no prompt was provided, enter interactive mode
     if not prompt:
-        interactive_mode(model, verbose)
+        interactive_mode(model, api_key, verbose)
     else:
         user_prompt = " ".join(prompt)
         with console.status("[bold green]Generating command...[/bold green]", spinner="dots"):
-            result = generate_gcloud_command(user_prompt, model, verbose)
+            result = generate_gcloud_command(user_prompt, model, api_key, verbose)
         
         handle_command_result(result, model, verbose)
 
