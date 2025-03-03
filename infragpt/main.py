@@ -5,7 +5,9 @@ import sys
 import re
 import yaml
 import json
-from typing import Literal, Optional, List, Dict, Tuple, Any
+import uuid
+import datetime
+from typing import Literal, Optional, List, Dict, Tuple, Any, Union
 
 import click
 from prompt_toolkit import PromptSession
@@ -37,6 +39,8 @@ MODEL_TYPE = Literal["gpt4o", "claude"]
 # Path to config directory
 CONFIG_DIR = pathlib.Path.home() / ".config" / "infragpt"
 CONFIG_FILE = CONFIG_DIR / "config.yaml"
+HISTORY_DIR = CONFIG_DIR / "history"
+HISTORY_DB_FILE = HISTORY_DIR / "history.jsonl"
 
 def load_config():
     """Load configuration from config file."""
@@ -358,7 +362,7 @@ def parse_command_parameters(command: str) -> Tuple[str, Dict[str, str], List[st
     
     return ' '.join(base_command), params, bracket_params
 
-def prompt_for_parameters(command: str, model_type: MODEL_TYPE) -> str:
+def prompt_for_parameters(command: str, model_type: MODEL_TYPE, return_params: bool = False) -> Union[str, Tuple[str, Dict[str, str]]]:
     """Prompt the user for each parameter in the command with AI assistance."""
     # Show the original command template first
     console.print("\n[bold blue]Command template:[/bold blue]")
@@ -374,9 +378,13 @@ def prompt_for_parameters(command: str, model_type: MODEL_TYPE) -> str:
     
     # If no parameters of any kind, just return the command as is
     if not params and not bracket_params:
+        if return_params:
+            return command, {}
         return command
     
     # First handle bracket parameters with a separate section
+    collected_params = {}
+    
     if bracket_params:
         console.print("\n[bold magenta]Command requires the following parameters:[/bold magenta]")
         
@@ -400,10 +408,15 @@ def prompt_for_parameters(command: str, model_type: MODEL_TYPE) -> str:
             # Get user input for this parameter
             value = Prompt.ask(prompt_text, default=default or "")
             
+            # Store parameter value
+            collected_params[param] = value
+            
             # Replace all occurrences of [PARAM] with the value
             command_with_replacements = command_with_replacements.replace(f"[{param}]", value)
         
         # Now we have a command with all bracket params replaced
+        if return_params:
+            return command_with_replacements, collected_params
         return command_with_replacements
     
     # If we just have regular parameters (no brackets), handle them normally
@@ -418,6 +431,7 @@ def prompt_for_parameters(command: str, model_type: MODEL_TYPE) -> str:
         
         value = Prompt.ask(prompt_text, default=default_value or "")
         updated_params[param] = value
+        collected_params[param] = value
     
     # Reconstruct command
     reconstructed_command = base_command
@@ -425,6 +439,8 @@ def prompt_for_parameters(command: str, model_type: MODEL_TYPE) -> str:
         if value:  # Only add non-empty parameters
             reconstructed_command += f" --{param}={value}"
     
+    if return_params:
+        return reconstructed_command, collected_params
     return reconstructed_command
 
 def split_commands(result: str) -> List[str]:
@@ -458,17 +474,21 @@ def handle_command_result(result: str, model_type: Optional[MODEL_TYPE] = None, 
     
     # Process each command
     processed_commands = []
+    parameter_values = {}
+    
     for i, command in enumerate(commands):
         if verbose or len(commands) > 1:
             console.print(f"\n[bold cyan]Command {i+1} of {len(commands)}:[/bold cyan]")
             
         # Check if command has parameters and prompt for them
         if '[' in command or '--' in command:
-            processed_command = prompt_for_parameters(command, model_type)
+            processed_command, params = prompt_for_parameters(command, model_type, return_params=True)
             processed_commands.append(processed_command)
+            parameter_values[f"command_{i+1}"] = params
             console.print(Panel(processed_command, border_style="green", title=f"Final Command {i+1}"))
         else:
             processed_commands.append(command)
+            parameter_values[f"command_{i+1}"] = {}
             console.print(Panel(command, border_style="green", title=f"Command {i+1}"))
     
     # Set choices to just copy and run, with copy as default
@@ -497,6 +517,22 @@ def handle_command_result(result: str, model_type: Optional[MODEL_TYPE] = None, 
             default=default
         )
         
+        # Log the user's choice and the parameters they provided
+        try:
+            action_data = {
+                "command_index": i,
+                "original_command": commands[i],
+                "processed_command": command,
+                "parameters": parameter_values.get(f"command_{i+1}", {}),
+                "action": choice,
+                "model": model_type,
+                "verbose": verbose
+            }
+            log_interaction("command_action", action_data)
+        except Exception:
+            # Log failures should not interrupt the flow
+            pass
+        
         if choice == "copy" and CLIPBOARD_AVAILABLE:
             try:
                 pyperclip.copy(command)
@@ -506,8 +542,25 @@ def handle_command_result(result: str, model_type: Optional[MODEL_TYPE] = None, 
                 console.print("[dim]You can manually copy the command above.[/dim]")
         elif choice == "run":
             console.print("\n[bold yellow]Executing command...[/bold yellow]")
+            start_time = datetime.datetime.now()
             try:
-                os.system(command)
+                exit_code = os.system(command)
+                end_time = datetime.datetime.now()
+                
+                # Log command execution
+                try:
+                    execution_data = {
+                        "command": command,
+                        "exit_code": exit_code,
+                        "duration_ms": (end_time - start_time).total_seconds() * 1000,
+                        "parameters": parameter_values.get(f"command_{i+1}", {}),
+                        "model": model_type,
+                        "verbose": verbose
+                    }
+                    log_interaction("command_execution", execution_data)
+                except Exception:
+                    pass
+                
             except Exception as e:
                 console.print(f"[bold red]Error executing command: {e}[/bold red]")
             
@@ -536,7 +589,23 @@ def generate_gcloud_command(prompt: str, model_type: Optional[MODEL_TYPE] = None
     
     # Create and execute the chain
     chain = prompt_template | llm | StrOutputParser()
+    start_time = datetime.datetime.now()
     result = chain.invoke({"prompt": prompt})
+    end_time = datetime.datetime.now()
+    
+    # Log the interaction for future intelligence
+    try:
+        interaction_data = {
+            "model": actual_model,
+            "prompt": prompt,
+            "result": result.strip(),
+            "duration_ms": (end_time - start_time).total_seconds() * 1000,
+            "verbose": verbose
+        }
+        log_interaction("command_generation", interaction_data)
+    except Exception:
+        # Log failures should not interrupt the flow
+        pass
     
     return result.strip()
 
@@ -697,6 +766,47 @@ def validate_env_api_keys():
             
     return None, None
 
+def log_interaction(interaction_type: str, data: Dict[str, Any]):
+    """Log user interaction to the history database file."""
+    try:
+        # Ensure history directory exists
+        HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+        
+        # Prepare the history entry
+        entry = {
+            "id": str(uuid.uuid4()),
+            "timestamp": datetime.datetime.now().isoformat(),
+            "type": interaction_type,
+            "data": data
+        }
+        
+        # Append to history file
+        with open(HISTORY_DB_FILE, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+            
+    except Exception as e:
+        # Silently fail - history logging should not interrupt user flow
+        if 'verbose' in data and data.get('verbose'):
+            console.print(f"[dim]Warning: Could not log interaction: {e}[/dim]")
+
+def get_interaction_history(limit: int = 100) -> List[Dict[str, Any]]:
+    """Retrieve the most recent interaction history entries."""
+    if not HISTORY_DB_FILE.exists():
+        return []
+        
+    try:
+        entries = []
+        with open(HISTORY_DB_FILE, "r") as f:
+            for line in f:
+                if line.strip():
+                    entries.append(json.loads(line))
+        
+        # Return most recent entries first
+        return list(reversed(entries[-limit:]))
+    except Exception as e:
+        console.print(f"[yellow]Warning:[/yellow] Could not read history: {e}")
+        return []
+
 def init_config():
     """Initialize configuration file with environment variables if it doesn't exist."""
     if CONFIG_FILE.exists():
@@ -704,6 +814,9 @@ def init_config():
     
     # Create config directory if it doesn't exist
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    
+    # Create history directory too
+    HISTORY_DIR.mkdir(parents=True, exist_ok=True)
     
     config = {}
     
@@ -731,13 +844,100 @@ def init_config():
     if config:
         save_config(config)
 
-@click.command()
-@click.argument('prompt', nargs=-1)
+@click.group(invoke_without_command=True)
+@click.pass_context
+@click.version_option(package_name='infragpt')
+def cli(ctx):
+    """InfraGPT - Convert natural language to Google Cloud commands and manage history."""
+    # If no subcommand is specified, default to interactive mode
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(main)
+
+@cli.command(name='history')
+@click.option('--limit', '-l', type=int, default=10, help='Number of history entries to display')
+@click.option('--type', '-t', help='Filter by interaction type (e.g., command_generation, command_action, command_execution)')
+@click.option('--export', '-e', help='Export history to file path')
+def history_command(limit, type, export):
+    """View or export interaction history."""
+    # Ensure history directory exists
+    if not HISTORY_DB_FILE.exists():
+        console.print("[yellow]No history found.[/yellow]")
+        return
+        
+    # Read history
+    entries = get_interaction_history(limit=limit)
+    
+    if not entries:
+        console.print("[yellow]No history entries found.[/yellow]")
+        return
+    
+    # Filter by type if specified
+    if type:
+        entries = [entry for entry in entries if entry.get('type') == type]
+        if not entries:
+            console.print(f"[yellow]No history entries found with type '{type}'.[/yellow]")
+            return
+    
+    # Export if requested
+    if export:
+        try:
+            with open(export, 'w') as f:
+                for entry in entries:
+                    f.write(json.dumps(entry) + '\n')
+            console.print(f"[green]Exported {len(entries)} history entries to {export}[/green]")
+            return
+        except Exception as e:
+            console.print(f"[bold red]Error exporting history:[/bold red] {e}")
+            return
+    
+    # Display history
+    console.print(f"[bold]Last {len(entries)} interaction(s):[/bold]")
+    
+    for i, entry in enumerate(entries):
+        entry_type = entry.get('type', 'unknown')
+        timestamp = entry.get('timestamp', '')
+        timestamp_short = timestamp.split('T')[0] if 'T' in timestamp else timestamp
+        
+        if entry_type == 'command_generation':
+            data = entry.get('data', {})
+            model = data.get('model', 'unknown')
+            prompt = data.get('prompt', '')
+            result = data.get('result', '')
+            
+            console.print(f"\n[dim]{i+1}. {timestamp_short}[/dim] [bold blue]Command Generation[/bold blue] [dim]({model})[/dim]")
+            console.print(f"[bold cyan]Prompt:[/bold cyan] {prompt}")
+            console.print(f"[bold green]Result:[/bold green] {result}")
+            
+        elif entry_type == 'command_action':
+            data = entry.get('data', {})
+            action = data.get('action', 'unknown')
+            command = data.get('processed_command', '')
+            params = data.get('parameters', {})
+            
+            console.print(f"\n[dim]{i+1}. {timestamp_short}[/dim] [bold magenta]Command Action[/bold magenta] [dim]({action})[/dim]")
+            console.print(f"[bold cyan]Command:[/bold cyan] {command}")
+            if params:
+                console.print(f"[bold yellow]Parameters:[/bold yellow] {json.dumps(params)}")
+                
+        elif entry_type == 'command_execution':
+            data = entry.get('data', {})
+            command = data.get('command', '')
+            exit_code = data.get('exit_code', -1)
+            duration = data.get('duration_ms', 0) / 1000
+            
+            console.print(f"\n[dim]{i+1}. {timestamp_short}[/dim] [bold green]Command Execution[/bold green] [dim](exit: {exit_code}, {duration:.2f}s)[/dim]")
+            console.print(f"[bold cyan]Command:[/bold cyan] {command}")
+        
+        else:
+            console.print(f"\n[dim]{i+1}. {timestamp_short}[/dim] [bold]{entry_type}[/bold]")
+            console.print(json.dumps(entry.get('data', {}), indent=2))
+
+@cli.command(name='generate', context_settings={"ignore_unknown_options": True})
+@click.argument('prompt', nargs=-1, required=False)
 @click.option('--model', '-m', type=click.Choice(['gpt4o', 'claude']), 
               help='LLM model to use (gpt4o or claude)')
 @click.option('--api-key', '-k', help='API key for the selected model')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
-@click.version_option(package_name='infragpt')
 def main(prompt, model, api_key, verbose):
     """InfraGPT - Convert natural language to Google Cloud commands."""
     # Initialize config file if it doesn't exist
@@ -785,4 +985,4 @@ def main(prompt, model, api_key, verbose):
         handle_command_result(result, model, verbose)
 
 if __name__ == "__main__":
-    main()
+    cli()

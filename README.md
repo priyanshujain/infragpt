@@ -89,15 +89,25 @@ If no credentials are found from any of these sources, if an empty API key is de
 
 ## Usage
 
-### Command Line
+InfraGPT has two main subcommands:
+- `generate`: Convert natural language to Google Cloud commands (default command)
+- `history`: View or export your command history
 
-Run InfraGPT directly with a prompt:
+### Command Generation
+
+Generate gcloud commands from natural language:
 
 ```
-infragpt "create a new VM instance called test-vm in us-central1 with 2 CPUs"
+infragpt generate "create a new VM instance called test-vm in us-central1 with 2 CPUs"
 ```
 
-Or specify the model to use:
+**Important**: To use the default command with arguments, you need to use -- to separate the command from the arguments:
+
+```
+infragpt -- "create a new VM instance called test-vm in us-central1 with 2 CPUs"
+```
+
+Specify the model to use:
 
 ```
 infragpt --model claude "list all my compute instances in europe-west1"
@@ -115,6 +125,32 @@ Use keyboard shortcuts in interactive mode:
 - `Ctrl+D` to exit the application
 - `Ctrl+C` to clear the current input and start a new prompt
 
+### Command History
+
+View your recent command history:
+
+```
+infragpt history
+```
+
+Limit the number of entries:
+
+```
+infragpt history --limit 20
+```
+
+Filter by interaction type:
+
+```
+infragpt history --type command_execution
+```
+
+Export your history to a file:
+
+```
+infragpt history --export history.jsonl
+```
+
 ## Example Commands
 
 - "Create a new GKE cluster with 3 nodes in us-central1"
@@ -124,9 +160,15 @@ Use keyboard shortcuts in interactive mode:
 
 ## Options
 
+### Generate Command Options
 - `--model`, `-m`: Choose the LLM model (gpt4o or claude)
 - `--api-key`, `-k`: Provide an API key for the selected model
 - `--verbose`, `-v`: Enable verbose output
+
+### History Command Options
+- `--limit`, `-l`: Number of history entries to display (default: 10)
+- `--type`, `-t`: Filter by interaction type (command_generation, command_action, command_execution)
+- `--export`, `-e`: Export history to specified file path
 
 ## Contributing
 

@@ -19,7 +19,7 @@ setup(
     install_requires=requirements,
     entry_points={
         "console_scripts": [
-            "infragpt=infragpt.main:main",
+            "infragpt=infragpt.main:cli",
         ],
     },
     classifiers=[
